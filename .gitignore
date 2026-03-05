@@ -1,0 +1,4 @@
+*.csv
+Dictionary Files/
+.claude/
+__pycache__/
