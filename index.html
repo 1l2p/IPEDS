@@ -48,6 +48,7 @@
   td a { color: var(--primary); text-decoration: none; }
   td a:hover { text-decoration: underline; }
   .hbcu-tag { background: #ffc107; color: #000; font-size: 0.65rem; padding: 0.1rem 0.35rem; border-radius: 3px; margin-left: 0.3rem; font-weight: 600; }
+  .open-tag { background: #198754; color: #fff; font-size: 0.65rem; padding: 0.1rem 0.35rem; border-radius: 3px; margin-left: 0.3rem; font-weight: 600; }
 
   .pagination { display: flex; gap: 0.4rem; align-items: center; justify-content: center; padding: 1rem; }
   .pagination button {
@@ -118,7 +119,7 @@ const COLUMNS = [
   { key: "sector", label: "Sector", type: "string" },
   { key: "totalEnroll", label: "Enrollment", type: "number", fmt: fmtNum },
   { key: "gradRate", label: "Grad Rate", type: "number", fmt: fmtPct },
-  { key: "admRate", label: "Adm Rate", type: "number", fmt: fmtPct },
+  { key: "admRate", label: "Adm Rate", type: "number", render: renderAdmRate },
   { key: "satMid", label: "SAT Mid", type: "number", fmt: fmtNum },
   { key: "actMid", label: "ACT Mid", type: "number", fmt: fmtNum },
   { key: "enrollBlack", label: "Black", type: "number", fmt: fmtNum },
@@ -147,6 +148,12 @@ function renderName(row) {
   }
   if (row.hbcu) html += ' <span class="hbcu-tag">HBCU</span>';
   return html;
+}
+
+function renderAdmRate(row) {
+  if (row.admRate == null) return "—";
+  if (row.openAdmission) return '100% <span class="open-tag">Open</span>';
+  return row.admRate.toFixed(1) + "%";
 }
 
 function esc(s) {

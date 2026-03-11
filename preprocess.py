@@ -192,6 +192,17 @@ def load_admissions(path="adm2024.csv"):
     return admissions
 
 
+def load_open_admission(path="ic2024.csv"):
+    """Load open admission policy flag. OPENADMP=1 means open admission."""
+    open_adm = {}
+    with open(path) as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if row.get("OPENADMP") == "1":
+                open_adm[row["UNITID"]] = True
+    return open_adm
+
+
 def main():
     print("Loading institutional directory...")
     institutions = load_hd()
@@ -209,6 +220,10 @@ def main():
     admissions = load_admissions()
     print(f"  {len(admissions)} institutions with admissions data")
 
+    print("Loading open admission flags...")
+    open_adm = load_open_admission()
+    print(f"  {len(open_adm)} open admission institutions")
+
     # Merge all data
     print("Merging data...")
     result = []
@@ -220,6 +235,10 @@ def main():
             record.update(graduation[uid])
         if uid in admissions:
             record.update(admissions[uid])
+        # Set admRate=100 for open admission institutions without admissions data
+        if uid in open_adm and record.get("admRate") is None:
+            record["admRate"] = 100.0
+            record["openAdmission"] = True
         # Only include institutions with some enrollment data
         if record.get("totalEnroll") and record["totalEnroll"] > 0:
             result.append(record)
