@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<script src="data.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>IPEDS Explorer 2024</title>
 <style>
@@ -14,6 +15,8 @@
     --primary: #0d6efd;
     --primary-hover: #0b5ed7;
     --accent: #e9ecef;
+    --selected: #e8f0fe;
+    --selection-bar: #1a73e8;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
@@ -33,6 +36,32 @@
   .range-filter input[type="number"] { width: 60px; padding: 0.4rem 0.4rem; border: 1px solid var(--border); border-radius: 6px; font-size: 0.875rem; }
   .filters .sep { width: 1px; height: 24px; background: var(--border); }
 
+  .selection-bar {
+    display: none;
+    padding: 0.5rem 1.5rem;
+    background: var(--selection-bar);
+    color: #fff;
+    font-size: 0.8rem;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .selection-bar.visible { display: flex; }
+  .selection-bar strong { font-weight: 600; }
+  .selection-bar button {
+    padding: 0.25rem 0.6rem;
+    border: 1px solid rgba(255,255,255,0.4);
+    border-radius: 4px;
+    background: transparent;
+    color: #fff;
+    font-size: 0.75rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .selection-bar button:hover { background: rgba(255,255,255,0.15); }
+  .selection-bar button.active { background: rgba(255,255,255,0.25); border-color: #fff; }
+  .selection-bar .sel-stats { margin-left: auto; display: flex; gap: 1.5rem; flex-wrap: wrap; }
+
   .stats-bar { padding: 0.5rem 1.5rem; font-size: 0.8rem; color: var(--muted); background: var(--accent); display: flex; gap: 1.5rem; flex-wrap: wrap; }
 
   .table-wrap { overflow-x: auto; padding: 0 1.5rem 2rem; }
@@ -40,10 +69,15 @@
   thead { position: sticky; top: 0; z-index: 2; }
   th { background: var(--card); border-bottom: 2px solid var(--border); padding: 0.5rem 0.6rem; text-align: left; white-space: nowrap; cursor: pointer; user-select: none; font-weight: 600; }
   th:hover { background: var(--accent); }
+  th.check-col { width: 36px; cursor: default; text-align: center; }
+  th.check-col:hover { background: var(--card); }
   th .arrow { font-size: 0.7rem; margin-left: 0.25rem; color: var(--muted); }
   th .arrow.active { color: var(--primary); }
   td { padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td.check-col { text-align: center; width: 36px; }
   tr:hover td { background: #f0f6ff; }
+  tr.selected td { background: var(--selected); }
+  tr.selected:hover td { background: #d6e5fc; }
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
   td a { color: var(--primary); text-decoration: none; }
   td a:hover { text-decoration: underline; }
@@ -68,6 +102,8 @@
     .filters input[type="search"] { min-width: 100%; }
     header { padding: 0.75rem 1rem; }
     .table-wrap { padding: 0 0.5rem 2rem; }
+    .selection-bar { padding: 0.5rem 1rem; }
+    .selection-bar .sel-stats { margin-left: 0; }
   }
 </style>
 </head>
@@ -94,6 +130,13 @@
   </select>
   <div class="sep"></div>
   <label class="range-filter">Adm Rate ≥ <input type="number" id="admRateFilter" min="0" max="100" step="5" placeholder="e.g. 50"> %</label>
+</div>
+
+<div class="selection-bar" id="selectionBar">
+  <strong id="selCount">0 selected</strong>
+  <button id="showSelectedBtn" onclick="toggleShowSelected()">Show selected only</button>
+  <button onclick="clearSelection()">Clear selection</button>
+  <div class="sel-stats" id="selStats"></div>
 </div>
 
 <div class="stats-bar" id="statsBar"></div>
@@ -134,6 +177,10 @@ let sortKey = "totalEnroll";
 let sortAsc = false;
 let currentPage = 0;
 
+// Selection state
+const selected = new Set(); // stores UNITID strings
+let showSelectedOnly = false;
+
 function fmtNum(v) { return v != null ? v.toLocaleString() : "—"; }
 function fmtPct(v) { return v != null ? v.toFixed(1) + "%" : "—"; }
 
@@ -163,8 +210,9 @@ function esc(s) {
 }
 
 async function init() {
-  const resp = await fetch("data.json");
-  const json = await resp.json();
+  const json = typeof IPEDS_DATA !== "undefined"
+    ? IPEDS_DATA
+    : await fetch("data.json").then(r => r.json());
   allData = json.data;
 
   // Populate filter dropdowns
@@ -202,6 +250,13 @@ function debounce(fn, ms) {
 
 function buildHeader() {
   const row = document.getElementById("headerRow");
+  // Checkbox column header
+  const thCheck = document.createElement("th");
+  thCheck.className = "check-col";
+  thCheck.innerHTML = '<input type="checkbox" id="selectAllCheck" title="Select all on this page">';
+  thCheck.querySelector("input").addEventListener("change", toggleSelectAll);
+  row.appendChild(thCheck);
+
   COLUMNS.forEach(col => {
     const th = document.createElement("th");
     th.dataset.key = col.key;
@@ -243,6 +298,8 @@ function applyFilters() {
   const minAdmRate = parseFloat(document.getElementById("admRateFilter").value);
 
   filtered = allData.filter(r => {
+    // In "show selected only" mode, only show selected institutions
+    if (showSelectedOnly && !selected.has(r.id)) return false;
     if (q && !r.name.toLowerCase().includes(q) && !r.city.toLowerCase().includes(q)) return false;
     if (state && r.state !== state) return false;
     if (sector && r.sector !== sector) return false;
@@ -284,13 +341,16 @@ function renderTable() {
     tbody.innerHTML = "";
     document.getElementById("empty").style.display = "";
     document.getElementById("pagination").innerHTML = "";
+    updateSelectAllCheckbox();
     return;
   }
   document.getElementById("empty").style.display = "none";
 
   let html = "";
   page.forEach(row => {
-    html += "<tr>";
+    const isSel = selected.has(row.id);
+    html += `<tr class="${isSel ? "selected" : ""}">`;
+    html += `<td class="check-col"><input type="checkbox" ${isSel ? "checked" : ""} data-id="${row.id}"></td>`;
     COLUMNS.forEach(col => {
       const cls = col.type === "number" ? ' class="num"' : "";
       let val;
@@ -306,7 +366,116 @@ function renderTable() {
     html += "</tr>";
   });
   tbody.innerHTML = html;
+
+  // Attach checkbox listeners
+  tbody.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.addEventListener("change", () => toggleRow(cb.dataset.id, cb.checked));
+  });
+
+  updateSelectAllCheckbox();
   renderPagination();
+}
+
+function toggleRow(id, isChecked) {
+  if (isChecked) {
+    selected.add(id);
+  } else {
+    selected.delete(id);
+  }
+  // Update row highlight without full re-render
+  const tbody = document.getElementById("tableBody");
+  tbody.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.closest("tr").className = selected.has(cb.dataset.id) ? "selected" : "";
+  });
+  updateSelectAllCheckbox();
+  updateSelectionBar();
+  updateStats();
+}
+
+function toggleSelectAll(e) {
+  const start = currentPage * PAGE_SIZE;
+  const page = filtered.slice(start, start + PAGE_SIZE);
+  const checked = e.target.checked;
+  page.forEach(row => {
+    if (checked) selected.add(row.id);
+    else selected.delete(row.id);
+  });
+  renderTable();
+  updateSelectionBar();
+  updateStats();
+}
+
+function updateSelectAllCheckbox() {
+  const cb = document.getElementById("selectAllCheck");
+  if (!cb) return;
+  const start = currentPage * PAGE_SIZE;
+  const page = filtered.slice(start, start + PAGE_SIZE);
+  if (page.length === 0) {
+    cb.checked = false;
+    cb.indeterminate = false;
+    return;
+  }
+  const selCount = page.filter(r => selected.has(r.id)).length;
+  cb.checked = selCount === page.length;
+  cb.indeterminate = selCount > 0 && selCount < page.length;
+}
+
+function toggleShowSelected() {
+  showSelectedOnly = !showSelectedOnly;
+  const btn = document.getElementById("showSelectedBtn");
+  btn.className = showSelectedOnly ? "active" : "";
+  btn.textContent = showSelectedOnly ? "Show all" : "Show selected only";
+  applyFilters();
+}
+
+function clearSelection() {
+  selected.clear();
+  showSelectedOnly = false;
+  const btn = document.getElementById("showSelectedBtn");
+  btn.className = "";
+  btn.textContent = "Show selected only";
+  applyFilters();
+  updateSelectionBar();
+}
+
+function computeAggregates(rows) {
+  const total = rows.length;
+  const totalEnroll = rows.reduce((s, r) => s + (r.totalEnroll || 0), 0);
+  const withGrad = rows.filter(r => r.gradRate != null);
+  const avgGrad = withGrad.length > 0
+    ? (withGrad.reduce((s, r) => s + r.gradRate, 0) / withGrad.length).toFixed(1)
+    : null;
+  const withAdm = rows.filter(r => r.admRate != null);
+  const avgAdm = withAdm.length > 0
+    ? (withAdm.reduce((s, r) => s + r.admRate, 0) / withAdm.length).toFixed(1)
+    : null;
+  return { total, totalEnroll, avgGrad, withGrad: withGrad.length, avgAdm, withAdm: withAdm.length };
+}
+
+function updateSelectionBar() {
+  const bar = document.getElementById("selectionBar");
+  const countEl = document.getElementById("selCount");
+  const statsEl = document.getElementById("selStats");
+
+  if (selected.size === 0) {
+    bar.classList.remove("visible");
+    return;
+  }
+
+  bar.classList.add("visible");
+  countEl.textContent = `${selected.size.toLocaleString()} selected`;
+
+  const selRows = allData.filter(r => selected.has(r.id));
+  const agg = computeAggregates(selRows);
+
+  let html = `<span>Enrollment: <strong>${agg.totalEnroll.toLocaleString()}</strong></span>`;
+  if (agg.avgGrad != null) {
+    html += `<span>Avg grad rate: <strong>${agg.avgGrad}%</strong></span>`;
+  }
+  if (agg.avgAdm != null) {
+    html += `<span>Avg adm rate: <strong>${agg.avgAdm}%</strong></span>`;
+  }
+  statsEl.innerHTML = html;
 }
 
 function renderPagination() {
@@ -329,19 +498,13 @@ function goPage(p) {
 
 function updateStats() {
   const bar = document.getElementById("statsBar");
-  const total = filtered.length;
-  const withGrad = filtered.filter(r => r.gradRate != null).length;
-  const withAdm = filtered.filter(r => r.admRate != null).length;
-  const totalEnroll = filtered.reduce((s, r) => s + (r.totalEnroll || 0), 0);
-  const avgGrad = withGrad > 0
-    ? (filtered.reduce((s, r) => s + (r.gradRate || 0), 0) / withGrad).toFixed(1)
-    : "—";
+  const agg = computeAggregates(filtered);
 
   bar.innerHTML = `
-    <span><strong>${total.toLocaleString()}</strong> institutions</span>
-    <span>Total enrollment: <strong>${totalEnroll.toLocaleString()}</strong></span>
-    <span>Avg grad rate: <strong>${avgGrad}%</strong> (${withGrad.toLocaleString()} reporting)</span>
-    <span>${withAdm.toLocaleString()} with admissions data</span>
+    <span><strong>${agg.total.toLocaleString()}</strong> institutions</span>
+    <span>Total enrollment: <strong>${agg.totalEnroll.toLocaleString()}</strong></span>
+    <span>Avg grad rate: <strong>${agg.avgGrad != null ? agg.avgGrad + "%" : "—"}</strong> (${agg.withGrad.toLocaleString()} reporting)</span>
+    <span>${agg.withAdm.toLocaleString()} with admissions data</span>
   `;
 }
 

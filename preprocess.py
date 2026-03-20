@@ -259,13 +259,22 @@ def main():
         "data": result,
     }
 
+    import os
+
     out_path = "data.json"
     with open(out_path, "w") as f:
         json.dump(output, f, separators=(",", ":"))
-
-    import os
     size_mb = os.path.getsize(out_path) / (1024 * 1024)
     print(f"Written {out_path} ({size_mb:.1f} MB)")
+
+    # Also write data.js for local file:// usage (no fetch needed)
+    js_path = "data.js"
+    with open(js_path, "w") as f:
+        f.write("var IPEDS_DATA = ")
+        json.dump(output, f, separators=(",", ":"))
+        f.write(";\n")
+    size_mb = os.path.getsize(js_path) / (1024 * 1024)
+    print(f"Written {js_path} ({size_mb:.1f} MB)")
 
 
 if __name__ == "__main__":

@@ -2,3 +2,5 @@
 Dictionary Files/
 .claude/
 __pycache__/
+.DS_Store
+.Rhistory
