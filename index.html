@@ -126,6 +126,7 @@
   td a:hover { text-decoration: underline; }
   .hbcu-tag { background: #ffc107; color: #000; font-size: 0.65rem; padding: 0.1rem 0.35rem; border-radius: 3px; margin-left: 0.3rem; font-weight: 600; }
   .open-tag { background: #198754; color: #fff; font-size: 0.65rem; padding: 0.1rem 0.35rem; border-radius: 3px; margin-left: 0.3rem; font-weight: 600; }
+  .om-tag { background: #6f42c1; color: #fff; font-size: 0.6rem; padding: 0.1rem 0.3rem; border-radius: 3px; margin-left: 0.3rem; font-weight: 600; cursor: help; }
 
   .pagination { display: flex; gap: 0.4rem; align-items: center; justify-content: center; padding: 1rem; }
   .pagination button {
@@ -235,7 +236,7 @@ const COLUMNS = [
   { key: "state", label: "State", type: "string" },
   { key: "sector", label: "Sector", type: "string" },
   { key: "totalEnroll", label: "Enrollment", type: "number", fmt: fmtNum },
-  { key: "gradRate", label: "Grad Rate", type: "number", fmt: fmtPct },
+  { key: "gradRate", label: "Grad Rate", type: "number", render: renderGradRate },
   { key: "admRate", label: "Adm Rate", type: "number", render: renderAdmRate },
   { key: "satMid", label: "SAT Mid", type: "number", fmt: fmtNum },
   { key: "actMid", label: "ACT Mid", type: "number", fmt: fmtNum },
@@ -284,6 +285,13 @@ function renderName(row) {
   }
   if (row.hbcu) html += ' <span class="hbcu-tag">HBCU</span>';
   return html;
+}
+
+function renderGradRate(row) {
+  if (row.gradRate == null) return "\u2014";
+  const pct = row.gradRate.toFixed(1) + "%";
+  if (row.gradSource === "OM") return pct + ' <span class="om-tag" title="8-year completion rate from Outcome Measures">OM</span>';
+  return pct;
 }
 
 function renderAdmRate(row) {

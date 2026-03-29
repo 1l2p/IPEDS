@@ -34,6 +34,9 @@ COMPONENTS = [
     ("ADM", lambda y: f"ADM{y}"),
     ("IC", lambda y: f"IC{y}"),
     ("EFD", lambda y: f"EF{y}D"),
+    ("OM", lambda y: f"OM{y}"),
+    # Distance education: EFFY_DIST for 2020+, EF_A_DIST for pre-2020
+    ("DE", lambda y: f"EFFY{y}_DIST" if y >= 2020 else f"EF{y}A_DIST"),
 ]
 
 

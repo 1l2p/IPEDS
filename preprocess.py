@@ -229,39 +229,107 @@ def load_de_enrollment(year: int) -> dict:
 
 
 def load_graduation(year: int) -> dict:
-    """Load graduation rates. Rate = completers 150% / adjusted cohort."""
+    """Load graduation rates at 150% of normal time from the GR file.
+
+    Covers all institution types:
+      - 4-year: SECTION=1, GRTYPE=2 (cohort) / GRTYPE=3 (completers at 150%)
+      - 2-year: SECTION=4, GRTYPE=29 (cohort) / GRTYPE=30 (completers at 150%)
+      - <2-year: SECTION=3, GRTYPE=20 (cohort) / GRTYPE=21 (completers at 150%)
+    All use LINE=999 (total across races).
+    """
     path = csv_path(year, "gr")
     if not path.exists():
         print(f"  [warn] {path} not found")
         return {}
 
-    cohorts = {}
-    completers = {}
+    # Each section has different GRTYPE codes and LINE values for totals:
+    #   SECTION=1 (4-year): GRTYPE=2 (cohort, LINE=999), GRTYPE=3 (completers, LINE=999)
+    #   SECTION=4 (2-year): GRTYPE=29 (cohort, LINE=50), GRTYPE=30 (completers, LINE=29A)
+    #   SECTION=3 (<2-year): GRTYPE=20 (cohort, LINE=50), GRTYPE=21 (completers, LINE=29A)
+    # We match on GRTYPE alone (LINE is implied by the GRTYPE).
+    SECTIONS = {
+        # section -> (cohort_grtype, completers_grtype)
+        "1": ("2", "3"),       # 4-year at 150%
+        "4": ("29", "30"),     # 2-year at 150%
+        "3": ("20", "21"),     # <2-year at 150%
+    }
+
+    # Build a set of all relevant GRTYPEs for quick filtering
+    relevant_grtypes = set()
+    for cgt, compgt in SECTIONS.values():
+        relevant_grtypes.add(cgt)
+        relevant_grtypes.add(compgt)
+
+    cohorts: dict[str, dict[str, int | None]] = {s: {} for s in SECTIONS}
+    completers_map: dict[str, dict[str, int | None]] = {s: {} for s in SECTIONS}
 
     with open(path, encoding="utf-8-sig", errors="replace") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            if row.get("SECTION", "").strip() != "1" or row.get("LINE", "").strip() != "999":
+            section = row.get("SECTION", "").strip()
+            if section not in SECTIONS:
                 continue
-            uid = row["UNITID"]
-            gt = row.get("GRTYPE", "").strip()
-            total = safe_int_keep_special(row.get("GRTOTLT"))
-            if gt == "2":
-                cohorts[uid] = total
-            elif gt == "3":
-                completers[uid] = total
 
+            gt = row.get("GRTYPE", "").strip()
+            if gt not in relevant_grtypes:
+                continue
+
+            uid = row["UNITID"]
+            total = safe_int_keep_special(row.get("GRTOTLT"))
+
+            cohort_gt, comp_gt = SECTIONS[section]
+            if gt == cohort_gt:
+                cohorts[section][uid] = total
+            elif gt == comp_gt:
+                completers_map[section][uid] = total
+
+    # Build graduation dict: prefer 4-year data, then 2-year, then <2-year
     graduation = {}
-    for uid in cohorts:
-        c = cohorts[uid]
-        comp = completers.get(uid)
-        if c and c > 0 and comp is not None:
-            graduation[uid] = {
-                "gradCohort": c,
-                "gradCompleters": comp,
-                "gradRate": round(comp / c * 100, 1),
-            }
+    for section in ("1", "4", "3"):
+        for uid in cohorts[section]:
+            if uid in graduation:
+                continue  # already have data from a higher-priority section
+            c = cohorts[section][uid]
+            comp = completers_map[section].get(uid)
+            if c and c > 0 and comp is not None:
+                graduation[uid] = {
+                    "gradCohort": c,
+                    "gradCompleters": comp,
+                    "gradRate": round(comp / c * 100, 1),
+                }
+
     return graduation
+
+
+def load_outcome_measures(year: int) -> dict:
+    """Load 8-year completion rates from Outcome Measures (OM) as fallback.
+
+    Uses OMCHRT=50 (all entering students) and OMAWDP8 (8-year award rate).
+    OM data is available for 2015-2023.
+    """
+    path = RAW_DIR / str(year) / f"om{year}.csv"
+    if not path.exists():
+        return {}
+
+    om_data = {}
+    with open(path, encoding="utf-8-sig", errors="replace") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            chrt = row.get("OMCHRT", "").strip()
+            if chrt != "50":
+                continue
+
+            uid = row["UNITID"]
+            rate = safe_float(row.get("OMAWDP8"))
+            cohort = safe_int_keep_special(row.get("OMACHT"))
+
+            if rate is not None and rate >= 0:
+                om_data[uid] = {
+                    "gradRate": round(rate, 1),
+                    "gradCohort": cohort,
+                    "gradSource": "OM",
+                }
+    return om_data
 
 
 def load_admissions(year: int) -> dict:
@@ -367,7 +435,10 @@ def main() -> None:
         print(f"  Distance ed: {len(de)} institutions")
 
         grad = load_graduation(year)
-        print(f"  Graduation: {len(grad)} institutions")
+        print(f"  Graduation (GR): {len(grad)} institutions")
+
+        om = load_outcome_measures(year)
+        print(f"  Outcome Measures (OM): {len(om)} institutions")
 
         adm = load_admissions(year)
         print(f"  Admissions: {len(adm)} institutions")
@@ -398,6 +469,9 @@ def main() -> None:
                 yd.update(de[uid])
             if uid in grad:
                 yd.update(grad[uid])
+            elif uid in om:
+                # Use OM data as fallback for institutions not in GR
+                yd.update(om[uid])
             if uid in adm:
                 yd.update(adm[uid])
             if uid in ic:
