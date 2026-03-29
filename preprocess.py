@@ -1,9 +1,19 @@
 #!/usr/bin/env python3
-"""Preprocess IPEDS 2024 CSV files into a single JSON for the web explorer."""
+"""Preprocess IPEDS CSV files (2014-2024) into a single multi-year JSON for the web explorer.
+
+Produces a hybrid schema: static institution fields stored once, time-varying
+fields nested under yearData[year].
+"""
+
+from __future__ import annotations
 
 import csv
 import json
 import sys
+from pathlib import Path
+
+YEARS = range(2014, 2025)
+RAW_DIR = Path("data/raw")
 
 SECTOR_LABELS = {
     "0": "Administrative Unit",
@@ -53,9 +63,9 @@ INSTSIZE_LABELS = {
 }
 
 
-def safe_int(val):
+def safe_int(val: str | None) -> int | None:
     """Convert to int, returning None for missing/invalid values."""
-    if val is None or val == "" or val == ".":
+    if val is None or val.strip() in ("", ".", "-2", "-1"):
         return None
     try:
         return int(val)
@@ -63,8 +73,21 @@ def safe_int(val):
         return None
 
 
-def safe_float(val):
-    if val is None or val == "" or val == ".":
+def safe_int_keep_special(val: str | None) -> int | None:
+    """Convert to int, returning None only for truly missing values.
+
+    Unlike safe_int, does not treat -1/-2 as missing (used for codes).
+    """
+    if val is None or val.strip() in ("", "."):
+        return None
+    try:
+        return int(val)
+    except ValueError:
+        return None
+
+
+def safe_float(val: str | None) -> float | None:
+    if val is None or val.strip() in ("", "."):
         return None
     try:
         return float(val)
@@ -72,71 +95,157 @@ def safe_float(val):
         return None
 
 
-def load_hd(path="hd2024.csv"):
-    """Load institutional directory data."""
+def csv_path(year: int, component: str) -> Path:
+    """Return the path to a CSV file for a given year and component."""
+    return RAW_DIR / str(year) / f"{component}{year}.csv"
+
+
+def load_hd(year: int) -> dict:
+    """Load institutional directory data for a given year.
+
+    Returns dict mapping UNITID -> {static_fields, year_fields}.
+    """
+    path = csv_path(year, "hd")
+    if not path.exists():
+        print(f"  [warn] {path} not found")
+        return {}
+
     institutions = {}
-    with open(path) as f:
+    with open(path, encoding="utf-8-sig", errors="replace") as f:
         reader = csv.DictReader(f)
         for row in reader:
             uid = row["UNITID"]
             institutions[uid] = {
-                "id": uid,
-                "name": row["INSTNM"],
-                "city": row["CITY"],
-                "state": row["STABBR"],
-                "sector": SECTOR_LABELS.get(row.get("SECTOR", ""), ""),
-                "sectorCode": row.get("SECTOR", ""),
-                "control": CONTROL_LABELS.get(row.get("CONTROL", ""), ""),
-                "locale": LOCALE_LABELS.get(row.get("LOCALE", ""), row.get("LOCALE", "")),
-                "hbcu": row.get("HBCU", "") == "1",
-                "instSize": INSTSIZE_LABELS.get(row.get("INSTSIZE", ""), ""),
-                "lat": safe_float(row.get("LATITUDE")),
-                "lng": safe_float(row.get("LONGITUD")),
-                "webAddr": row.get("WEBADDR", ""),
+                "static": {
+                    "id": uid,
+                    "name": row.get("INSTNM", ""),
+                    "city": row.get("CITY", ""),
+                    "state": row.get("STABBR", ""),
+                    "lat": safe_float(row.get("LATITUDE")),
+                    "lng": safe_float(row.get("LONGITUD")),
+                    "webAddr": row.get("WEBADDR", ""),
+                    "hbcu": row.get("HBCU", "") == "1",
+                },
+                "year": {
+                    "sector": SECTOR_LABELS.get(row.get("SECTOR", ""), ""),
+                    "sectorCode": row.get("SECTOR", ""),
+                    "control": CONTROL_LABELS.get(row.get("CONTROL", ""), ""),
+                    "locale": LOCALE_LABELS.get(
+                        row.get("LOCALE", ""), row.get("LOCALE", "")
+                    ),
+                    "instSize": INSTSIZE_LABELS.get(row.get("INSTSIZE", ""), ""),
+                },
             }
     return institutions
 
 
-def load_enrollment(path="effy2024.csv"):
-    """Load total enrollment (EFFYALEV=1 = all students, all levels)."""
+def load_enrollment(year: int) -> dict:
+    """Load total enrollment from EFFY (EFFYALEV=1 or EFFYLEV=1, LSTUDY=999).
+
+    Returns dict mapping UNITID -> enrollment fields.
+    """
+    path = csv_path(year, "effy")
+    if not path.exists():
+        print(f"  [warn] {path} not found")
+        return {}
+
     enrollment = {}
-    with open(path) as f:
+    has_effyalev = year >= 2020
+
+    with open(path, encoding="utf-8-sig", errors="replace") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            if row["EFFYALEV"] != "1":
-                continue
+            lstudy = row.get("LSTUDY", "").strip()
+
+            if has_effyalev:
+                alev = row.get("EFFYALEV", "").strip()
+                if alev != "1" or lstudy != "999":
+                    continue
+            else:
+                effylev = row.get("EFFYLEV", "").strip()
+                if effylev != "1" or lstudy != "999":
+                    continue
+
             uid = row["UNITID"]
             enrollment[uid] = {
-                "totalEnroll": safe_int(row.get("EFYTOTLT")),
-                "enrollMen": safe_int(row.get("EFYTOTLM")),
-                "enrollWomen": safe_int(row.get("EFYTOTLW")),
-                "enrollWhite": safe_int(row.get("EFYWHITT")),
-                "enrollBlack": safe_int(row.get("EFYBKAAT")),
-                "enrollHispanic": safe_int(row.get("EFYHISPT")),
-                "enrollAsian": safe_int(row.get("EFYASIAT")),
-                "enrollAIAN": safe_int(row.get("EFYAIANT")),
-                "enrollNHPI": safe_int(row.get("EFYNHPIT")),
-                "enrollTwoMore": safe_int(row.get("EFY2MORT")),
-                "enrollUnknown": safe_int(row.get("EFYUNKNT")),
-                "enrollNonresident": safe_int(row.get("EFYNRALT")),
+                "totalEnroll": safe_int_keep_special(row.get("EFYTOTLT")),
+                "enrollMen": safe_int_keep_special(row.get("EFYTOTLM")),
+                "enrollWomen": safe_int_keep_special(row.get("EFYTOTLW")),
+                "enrollWhite": safe_int_keep_special(row.get("EFYWHITT")),
+                "enrollBlack": safe_int_keep_special(row.get("EFYBKAAT")),
+                "enrollHispanic": safe_int_keep_special(row.get("EFYHISPT")),
+                "enrollAsian": safe_int_keep_special(row.get("EFYASIAT")),
+                "enrollAIAN": safe_int_keep_special(row.get("EFYAIANT")),
+                "enrollNHPI": safe_int_keep_special(row.get("EFYNHPIT")),
+                "enrollTwoMore": safe_int_keep_special(row.get("EFY2MORT")),
+                "enrollUnknown": safe_int_keep_special(row.get("EFYUNKNT")),
+                "enrollNonresident": safe_int_keep_special(row.get("EFYNRALT")),
             }
     return enrollment
 
 
-def load_graduation(path="gr2024.csv"):
-    """Load graduation rates. Rate = completers 150% / adjusted cohort."""
-    # Collect SECTION=1, LINE=999 rows for GRTYPE 2 and 3
-    cohorts = {}  # GRTYPE=2: adjusted cohort
-    completers = {}  # GRTYPE=3: completers within 150%
+def load_de_enrollment(year: int) -> dict:
+    """Load distance education enrollment from dedicated DE files.
 
-    with open(path) as f:
+    Pre-2020: EF{year}A_DIST files with variables EFDELEV, EFDEEXC, EFDESOM, EFDENON
+    2020+:    EFFY{year}_DIST files with variables EFFYDLEV, EFYDEEXC, EFYDESOM, EFYDENON
+
+    Level code 1 = all students total. We extract:
+      - deExclusive: enrolled exclusively in distance education
+      - deSome: enrolled in some but not all DE courses
+      - deNone: not enrolled in any DE courses
+    """
+    if year >= 2020:
+        path = RAW_DIR / str(year) / f"effy{year}_dist.csv"
+        lev_col = "EFFYDLEV"
+        exc_col = "EFYDEEXC"
+        some_col = "EFYDESOM"
+        none_col = "EFYDENON"
+    else:
+        path = RAW_DIR / str(year) / f"ef{year}a_dist.csv"
+        lev_col = "EFDELEV"
+        exc_col = "EFDEEXC"
+        some_col = "EFDESOM"
+        none_col = "EFDENON"
+
+    if not path.exists():
+        print(f"  [warn] {path} not found")
+        return {}
+
+    de_data = {}
+    with open(path, encoding="utf-8-sig", errors="replace") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            if row["SECTION"] != "1" or row["LINE"] != "999":
+            lev = row.get(lev_col, "").strip()
+            if lev != "1":
                 continue
             uid = row["UNITID"]
-            gt = row["GRTYPE"]
-            total = safe_int(row.get("GRTOTLT"))
+            de_data[uid] = {
+                "deExclusive": safe_int_keep_special(row.get(exc_col)),
+                "deSome": safe_int_keep_special(row.get(some_col)),
+                "deNone": safe_int_keep_special(row.get(none_col)),
+            }
+    return de_data
+
+
+def load_graduation(year: int) -> dict:
+    """Load graduation rates. Rate = completers 150% / adjusted cohort."""
+    path = csv_path(year, "gr")
+    if not path.exists():
+        print(f"  [warn] {path} not found")
+        return {}
+
+    cohorts = {}
+    completers = {}
+
+    with open(path, encoding="utf-8-sig", errors="replace") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if row.get("SECTION", "").strip() != "1" or row.get("LINE", "").strip() != "999":
+                continue
+            uid = row["UNITID"]
+            gt = row.get("GRTYPE", "").strip()
+            total = safe_int_keep_special(row.get("GRTOTLT"))
             if gt == "2":
                 cohorts[uid] = total
             elif gt == "3":
@@ -155,31 +264,41 @@ def load_graduation(path="gr2024.csv"):
     return graduation
 
 
-def load_admissions(path="adm2024.csv"):
+def load_admissions(year: int) -> dict:
     """Load admissions data."""
+    path = csv_path(year, "adm")
+    if not path.exists():
+        print(f"  [warn] {path} not found")
+        return {}
+
     admissions = {}
-    with open(path) as f:
+    with open(path, encoding="utf-8-sig", errors="replace") as f:
         reader = csv.DictReader(f)
         for row in reader:
             uid = row["UNITID"]
-            apps = safe_int(row.get("APPLCN"))
-            adm = safe_int(row.get("ADMSSN"))
-            enrl = safe_int(row.get("ENRLT"))
-            sat25 = safe_int(row.get("SATVR25"))
-            sat75 = safe_int(row.get("SATVR75"))
-            satm25 = safe_int(row.get("SATMT25"))
-            satm75 = safe_int(row.get("SATMT75"))
-            act25 = safe_int(row.get("ACTCM25"))
-            act75 = safe_int(row.get("ACTCM75"))
+            apps = safe_int_keep_special(row.get("APPLCN"))
+            adm = safe_int_keep_special(row.get("ADMSSN"))
+            enrl = safe_int_keep_special(row.get("ENRLT"))
+
+            # SAT variables - same names across 2014-2024
+            sat25 = safe_int_keep_special(row.get("SATVR25"))
+            sat75 = safe_int_keep_special(row.get("SATVR75"))
+            satm25 = safe_int_keep_special(row.get("SATMT25"))
+            satm75 = safe_int_keep_special(row.get("SATMT75"))
+            act25 = safe_int_keep_special(row.get("ACTCM25"))
+            act75 = safe_int_keep_special(row.get("ACTCM75"))
 
             adm_rate = None
             if apps and apps > 0 and adm is not None:
                 adm_rate = round(adm / apps * 100, 1)
 
-            # Compute SAT composite midpoint (average of 25th and 75th for R+M)
             sat_mid = None
             if sat25 and sat75 and satm25 and satm75:
                 sat_mid = round((sat25 + sat75 + satm25 + satm75) / 2)
+
+            act_mid = None
+            if act25 and act75:
+                act_mid = round((act25 + act75) / 2)
 
             admissions[uid] = {
                 "applications": apps,
@@ -187,93 +306,175 @@ def load_admissions(path="adm2024.csv"):
                 "enrolled": enrl,
                 "admRate": adm_rate,
                 "satMid": sat_mid,
-                "actMid": round((act25 + act75) / 2) if act25 and act75 else None,
+                "actMid": act_mid,
             }
     return admissions
 
 
-def load_open_admission(path="ic2024.csv"):
-    """Load open admission policy flag. OPENADMP=1 means open admission."""
-    open_adm = {}
-    with open(path) as f:
+def load_ic(year: int) -> dict:
+    """Load IC data: open admission flag + distance education flags."""
+    path = csv_path(year, "ic")
+    if not path.exists():
+        print(f"  [warn] {path} not found")
+        return {}
+
+    ic_data = {}
+    with open(path, encoding="utf-8-sig", errors="replace") as f:
         reader = csv.DictReader(f)
         for row in reader:
+            uid = row["UNITID"]
+            record = {}
+
+            # Open admission flag
             if row.get("OPENADMP") == "1":
-                open_adm[row["UNITID"]] = True
-    return open_adm
+                record["openAdmission"] = True
+
+            # Distance education flags (available from ~2017+)
+            # DISTCRS: offers DE courses, DISTPGS: offers DE programs
+            distcrs = row.get("DISTCRS", "").strip()
+            distpgs = row.get("DISTPGS", "").strip()
+            if distcrs == "1":
+                record["deOffersCourses"] = True
+            if distpgs == "1":
+                record["deOffersPrograms"] = True
+
+            ic_data[uid] = record
+    return ic_data
 
 
-def main():
-    print("Loading institutional directory...")
-    institutions = load_hd()
-    print(f"  {len(institutions)} institutions")
+def strip_none(d: dict) -> dict:
+    """Remove keys with None values to save space in JSON output."""
+    return {k: v for k, v in d.items() if v is not None}
 
-    print("Loading enrollment...")
-    enrollment = load_enrollment()
-    print(f"  {len(enrollment)} institutions with enrollment data")
 
-    print("Loading graduation rates...")
-    graduation = load_graduation()
-    print(f"  {len(graduation)} institutions with graduation data")
+def main() -> None:
+    print(f"Processing IPEDS data for {YEARS.start}-{YEARS.stop - 1}")
+    print(f"Data directory: {RAW_DIR.resolve()}\n")
 
-    print("Loading admissions...")
-    admissions = load_admissions()
-    print(f"  {len(admissions)} institutions with admissions data")
+    # Master dict: UNITID -> {static fields, yearData: {year: fields}}
+    institutions: dict[str, dict] = {}
 
-    print("Loading open admission flags...")
-    open_adm = load_open_admission()
-    print(f"  {len(open_adm)} open admission institutions")
+    for year in YEARS:
+        print(f"\n=== {year} ===")
 
-    # Merge all data
-    print("Merging data...")
-    result = []
-    for uid, inst in institutions.items():
-        record = {**inst}
-        if uid in enrollment:
-            record.update(enrollment[uid])
-        if uid in graduation:
-            record.update(graduation[uid])
-        if uid in admissions:
-            record.update(admissions[uid])
-        # Set admRate=100 for open admission institutions without admissions data
-        if uid in open_adm and record.get("admRate") is None:
-            record["admRate"] = 100.0
-            record["openAdmission"] = True
-        # Only include institutions with some enrollment data
-        if record.get("totalEnroll") and record["totalEnroll"] > 0:
-            result.append(record)
+        hd = load_hd(year)
+        print(f"  HD: {len(hd)} institutions")
 
-    # Sort by total enrollment descending
-    result.sort(key=lambda x: x.get("totalEnroll", 0) or 0, reverse=True)
-    print(f"  {len(result)} institutions with enrollment > 0")
+        enroll = load_enrollment(year)
+        print(f"  Enrollment: {len(enroll)} institutions")
 
-    # Collect unique states for filter
-    states = sorted(set(r["state"] for r in result if r.get("state")))
-    sectors = sorted(set(r["sector"] for r in result if r.get("sector")))
+        de = load_de_enrollment(year)
+        print(f"  Distance ed: {len(de)} institutions")
+
+        grad = load_graduation(year)
+        print(f"  Graduation: {len(grad)} institutions")
+
+        adm = load_admissions(year)
+        print(f"  Admissions: {len(adm)} institutions")
+
+        ic = load_ic(year)
+        print(f"  IC: {len(ic)} institutions")
+
+        # Process each institution in HD for this year
+        for uid, hd_data in hd.items():
+            if uid not in institutions:
+                institutions[uid] = {
+                    **hd_data["static"],
+                    "yearData": {},
+                }
+            else:
+                # Update static fields with more recent year's data
+                # (later years overwrite earlier, so most recent wins)
+                for k, v in hd_data["static"].items():
+                    if v is not None and v != "":
+                        institutions[uid][k] = v
+
+            # Build year-specific data
+            yd = dict(hd_data["year"])
+
+            if uid in enroll:
+                yd.update(enroll[uid])
+            if uid in de:
+                yd.update(de[uid])
+            if uid in grad:
+                yd.update(grad[uid])
+            if uid in adm:
+                yd.update(adm[uid])
+            if uid in ic:
+                yd.update(ic[uid])
+
+            # Set admRate=100 for open admission institutions without admissions data
+            if yd.get("openAdmission") and yd.get("admRate") is None:
+                yd["admRate"] = 100.0
+
+            # Only store year data if there's meaningful enrollment
+            total = yd.get("totalEnroll")
+            if total is not None and total > 0:
+                institutions[uid]["yearData"][str(year)] = strip_none(yd)
+
+    # Filter: only keep institutions with at least one year of data
+    result = [
+        inst for inst in institutions.values() if inst.get("yearData")
+    ]
+
+    # Sort by most recent year's enrollment (use latest available year)
+    def sort_key(inst: dict) -> int:
+        yd = inst.get("yearData", {})
+        for y in reversed(list(YEARS)):
+            if str(y) in yd:
+                return yd[str(y)].get("totalEnroll", 0) or 0
+        return 0
+
+    result.sort(key=sort_key, reverse=True)
+
+    # Determine the most recent year with data as default
+    all_years = sorted(
+        set(
+            int(y)
+            for inst in result
+            for y in inst["yearData"]
+        )
+    )
+    default_year = all_years[-1] if all_years else 2024
+
+    # Collect unique states and sectors across all years
+    states = set()
+    sectors = set()
+    for inst in result:
+        if inst.get("state"):
+            states.add(inst["state"])
+        for yd in inst["yearData"].values():
+            if yd.get("sector"):
+                sectors.add(yd["sector"])
+
+    print(f"\n{'='*50}")
+    print(f"Total institutions: {len(result)}")
+    print(f"Years with data: {all_years}")
+    print(f"Default year: {default_year}")
 
     output = {
-        "generated": "2024",
+        "generated": "2014-2024",
+        "years": all_years,
+        "defaultYear": default_year,
         "count": len(result),
-        "states": states,
-        "sectors": sectors,
+        "states": sorted(states),
+        "sectors": sorted(sectors),
         "data": result,
     }
 
-    import os
-
-    out_path = "data.json"
+    out_path = Path("data.json")
     with open(out_path, "w") as f:
         json.dump(output, f, separators=(",", ":"))
-    size_mb = os.path.getsize(out_path) / (1024 * 1024)
-    print(f"Written {out_path} ({size_mb:.1f} MB)")
+    size_mb = out_path.stat().st_size / (1024 * 1024)
+    print(f"\nWritten {out_path} ({size_mb:.1f} MB)")
 
-    # Also write data.js for local file:// usage (no fetch needed)
-    js_path = "data.js"
+    # Also write data.js for local file:// usage
+    js_path = Path("data.js")
     with open(js_path, "w") as f:
         f.write("var IPEDS_DATA = ")
         json.dump(output, f, separators=(",", ":"))
         f.write(";\n")
-    size_mb = os.path.getsize(js_path) / (1024 * 1024)
+    size_mb = js_path.stat().st_size / (1024 * 1024)
     print(f"Written {js_path} ({size_mb:.1f} MB)")
 
 

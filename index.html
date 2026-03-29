@@ -3,8 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <script src="data.js"></script>
+<script src="lib/chart.umd.min.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>IPEDS Explorer 2024</title>
+<title>IPEDS Explorer</title>
 <style>
   :root {
     --bg: #f8f9fa;
@@ -24,6 +25,12 @@
   header { background: var(--card); border-bottom: 1px solid var(--border); padding: 1rem 1.5rem; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
   header h1 { font-size: 1.25rem; font-weight: 700; white-space: nowrap; }
   header .badge { background: var(--primary); color: #fff; font-size: 0.75rem; padding: 0.15rem 0.5rem; border-radius: 10px; }
+  header .year-select-wrap { display: flex; align-items: center; gap: 0.4rem; }
+  header .year-select-wrap label { font-size: 0.8rem; color: var(--muted); font-weight: 500; }
+  header select#yearSelect {
+    padding: 0.3rem 0.5rem; border: 1px solid var(--border); border-radius: 6px;
+    font-size: 0.85rem; background: var(--card); color: var(--text); font-weight: 600;
+  }
 
   .filters { background: var(--card); border-bottom: 1px solid var(--border); padding: 0.75rem 1.5rem; display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center; }
   .filters input, .filters select {
@@ -62,7 +69,43 @@
   .selection-bar button.active { background: rgba(255,255,255,0.25); border-color: #fff; }
   .selection-bar .sel-stats { margin-left: auto; display: flex; gap: 1.5rem; flex-wrap: wrap; }
 
-  .stats-bar { padding: 0.5rem 1.5rem; font-size: 0.8rem; color: var(--muted); background: var(--accent); display: flex; gap: 1.5rem; flex-wrap: wrap; }
+  .stats-bar { padding: 0.5rem 1.5rem; font-size: 0.8rem; color: var(--muted); background: var(--accent); display: flex; gap: 1.5rem; flex-wrap: wrap; align-items: center; }
+  .stats-bar .trend-btn {
+    margin-left: auto;
+    padding: 0.2rem 0.5rem;
+    border: 1px solid var(--muted);
+    border-radius: 4px;
+    background: var(--card);
+    color: var(--text);
+    font-size: 0.75rem;
+    cursor: pointer;
+  }
+  .stats-bar .trend-btn:hover { background: var(--accent); border-color: var(--text); }
+
+  /* Trend chart panel */
+  .trend-panel {
+    display: none;
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 1rem 1.5rem;
+  }
+  .trend-panel.visible { display: block; }
+  .trend-panel .trend-header {
+    display: flex; align-items: center; gap: 1rem; margin-bottom: 0.75rem; flex-wrap: wrap;
+  }
+  .trend-panel .trend-header h3 { font-size: 0.9rem; font-weight: 600; }
+  .trend-panel .trend-header select, .trend-panel .trend-header button {
+    padding: 0.3rem 0.5rem; border: 1px solid var(--border); border-radius: 6px;
+    font-size: 0.8rem; background: var(--card); color: var(--text);
+  }
+  .trend-panel .trend-header button { cursor: pointer; }
+  .trend-panel .trend-header button:hover { background: var(--accent); }
+  .trend-panel .trend-header .close-btn {
+    margin-left: auto; border: none; font-size: 1.1rem; cursor: pointer;
+    color: var(--muted); background: none; padding: 0 0.3rem;
+  }
+  .trend-panel .trend-header .close-btn:hover { color: var(--text); }
+  .trend-chart-wrap { position: relative; height: 320px; }
 
   .table-wrap { overflow-x: auto; padding: 0 1.5rem 2rem; }
   table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 0.5rem; }
@@ -104,6 +147,7 @@
     .table-wrap { padding: 0 0.5rem 2rem; }
     .selection-bar { padding: 0.5rem 1rem; }
     .selection-bar .sel-stats { margin-left: 0; }
+    .trend-chart-wrap { height: 240px; }
   }
 </style>
 </head>
@@ -111,7 +155,11 @@
 
 <header>
   <h1>IPEDS Explorer</h1>
-  <span class="badge">2024</span>
+  <div class="year-select-wrap">
+    <label for="yearSelect">Year:</label>
+    <select id="yearSelect"></select>
+  </div>
+  <span class="badge" id="yearBadge">2024</span>
 </header>
 
 <div class="filters" id="filters">
@@ -129,14 +177,40 @@
     <option value="20000">20,000+</option>
   </select>
   <div class="sep"></div>
-  <label class="range-filter">Adm Rate ≥ <input type="number" id="admRateFilter" min="0" max="100" step="5" placeholder="e.g. 50"> %</label>
+  <label class="range-filter">Adm Rate &ge; <input type="number" id="admRateFilter" min="0" max="100" step="5" placeholder="e.g. 50"> %</label>
 </div>
 
 <div class="selection-bar" id="selectionBar">
   <strong id="selCount">0 selected</strong>
   <button id="showSelectedBtn" onclick="toggleShowSelected()">Show selected only</button>
+  <button id="compareTrendBtn" onclick="showTrendForSelected()">Compare Trends</button>
   <button onclick="clearSelection()">Clear selection</button>
   <div class="sel-stats" id="selStats"></div>
+</div>
+
+<div class="trend-panel" id="trendPanel">
+  <div class="trend-header">
+    <h3>Trend Comparison</h3>
+    <select id="trendMetric">
+      <option value="totalEnroll">Enrollment</option>
+      <option value="gradRate">Graduation Rate</option>
+      <option value="admRate">Admission Rate</option>
+      <option value="satMid">SAT Midpoint</option>
+      <option value="actMid">ACT Midpoint</option>
+      <option value="enrollBlack">Black Enrollment</option>
+      <option value="enrollHispanic">Hispanic Enrollment</option>
+      <option value="enrollWhite">White Enrollment</option>
+      <option value="enrollAsian">Asian Enrollment</option>
+      <option value="deExclusive">Exclusively Online</option>
+      <option value="deSome">Some Online</option>
+      <option value="deNone">Not Online</option>
+    </select>
+    <button id="trendModeBtn" onclick="toggleTrendMode()">Show Group Average</button>
+    <button class="close-btn" onclick="closeTrend()" title="Close">&times;</button>
+  </div>
+  <div class="trend-chart-wrap">
+    <canvas id="trendChart"></canvas>
+  </div>
 </div>
 
 <div class="stats-bar" id="statsBar"></div>
@@ -168,9 +242,19 @@ const COLUMNS = [
   { key: "enrollBlack", label: "Black", type: "number", fmt: fmtNum },
   { key: "enrollHispanic", label: "Hispanic", type: "number", fmt: fmtNum },
   { key: "enrollWhite", label: "White", type: "number", fmt: fmtNum },
+  { key: "deExclusive", label: "Online Only", type: "number", fmt: fmtNum },
+  { key: "deSome", label: "Some Online", type: "number", fmt: fmtNum },
+  { key: "deNone", label: "Not Online", type: "number", fmt: fmtNum },
 ];
 
 const PAGE_SIZE = 50;
+
+// Multi-year data
+let fullData = [];        // raw data with yearData nesting
+let availableYears = [];  // [2014, 2015, ..., 2024]
+let currentYear = 2024;
+
+// Flattened view for current year (backwards compatible with existing code)
 let allData = [];
 let filtered = [];
 let sortKey = "totalEnroll";
@@ -178,11 +262,16 @@ let sortAsc = false;
 let currentPage = 0;
 
 // Selection state
-const selected = new Set(); // stores UNITID strings
+const selected = new Set();
 let showSelectedOnly = false;
 
-function fmtNum(v) { return v != null ? v.toLocaleString() : "—"; }
-function fmtPct(v) { return v != null ? v.toFixed(1) + "%" : "—"; }
+// Trend chart state
+let trendChart = null;
+let trendMode = "selected"; // "selected" or "group"
+
+// ── Formatting helpers ──────────────────────────────────────────────
+function fmtNum(v) { return v != null ? v.toLocaleString() : "\u2014"; }
+function fmtPct(v) { return v != null ? v.toFixed(1) + "%" : "\u2014"; }
 
 function renderName(row) {
   let html = "";
@@ -198,7 +287,7 @@ function renderName(row) {
 }
 
 function renderAdmRate(row) {
-  if (row.admRate == null) return "—";
+  if (row.admRate == null) return "\u2014";
   if (row.openAdmission) return '100% <span class="open-tag">Open</span>';
   return row.admRate.toFixed(1) + "%";
 }
@@ -209,21 +298,72 @@ function esc(s) {
   return d.innerHTML;
 }
 
+// ── Multi-year data flattening ──────────────────────────────────────
+function flattenForYear(data, year) {
+  const yStr = String(year);
+  return data
+    .filter(inst => inst.yearData && inst.yearData[yStr])
+    .map(inst => {
+      const yd = inst.yearData[yStr];
+      return {
+        id: inst.id,
+        name: inst.name,
+        city: inst.city,
+        state: inst.state,
+        lat: inst.lat,
+        lng: inst.lng,
+        webAddr: inst.webAddr,
+        hbcu: inst.hbcu,
+        ...yd,
+      };
+    })
+    .filter(r => r.totalEnroll && r.totalEnroll > 0);
+}
+
+function switchYear(year) {
+  currentYear = year;
+  document.getElementById("yearBadge").textContent = year;
+  allData = flattenForYear(fullData, year);
+  applyFilters();
+  if (document.getElementById("trendPanel").classList.contains("visible")) {
+    renderTrend();
+  }
+}
+
+// ── Init ────────────────────────────────────────────────────────────
 async function init() {
   const json = typeof IPEDS_DATA !== "undefined"
     ? IPEDS_DATA
     : await fetch("data.json").then(r => r.json());
-  allData = json.data;
+
+  fullData = json.data;
+  availableYears = json.years || [2024];
+  currentYear = json.defaultYear || availableYears[availableYears.length - 1];
+
+  // Populate year selector
+  const yearSelect = document.getElementById("yearSelect");
+  availableYears.forEach(y => {
+    const opt = document.createElement("option");
+    opt.value = y; opt.textContent = y;
+    if (y === currentYear) opt.selected = true;
+    yearSelect.appendChild(opt);
+  });
+  yearSelect.addEventListener("change", () => switchYear(parseInt(yearSelect.value)));
+
+  document.getElementById("yearBadge").textContent = currentYear;
+
+  // Flatten for default year
+  allData = flattenForYear(fullData, currentYear);
 
   // Populate filter dropdowns
   const stateSelect = document.getElementById("stateFilter");
-  json.states.forEach(s => {
+  (json.states || []).forEach(s => {
     const opt = document.createElement("option");
     opt.value = s; opt.textContent = s;
     stateSelect.appendChild(opt);
   });
   const sectorSelect = document.getElementById("sectorFilter");
-  json.sectors.forEach(s => {
+  (json.sectors || []).forEach(s => {
     const opt = document.createElement("option");
     opt.value = s; opt.textContent = s;
     sectorSelect.appendChild(opt);
@@ -242,15 +382,18 @@ async function init() {
   document.getElementById("hbcuFilter").addEventListener("change", applyFilters);
   document.getElementById("sizeFilter").addEventListener("change", applyFilters);
   document.getElementById("admRateFilter").addEventListener("input", debounce(applyFilters, 300));
+
+  // Trend metric change
+  document.getElementById("trendMetric").addEventListener("change", renderTrend);
 }
 
 function debounce(fn, ms) {
   let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
 }
 
+// ── Table header ────────────────────────────────────────────────────
 function buildHeader() {
   const row = document.getElementById("headerRow");
-  // Checkbox column header
   const thCheck = document.createElement("th");
   thCheck.className = "check-col";
   thCheck.innerHTML = '<input type="checkbox" id="selectAllCheck" title="Select all on this page">';
@@ -281,7 +424,7 @@ function updateSortArrows() {
     const el = document.getElementById("arrow-" + col.key);
     if (col.key === sortKey) {
       el.className = "arrow active";
-      el.textContent = sortAsc ? "▲" : "▼";
+      el.textContent = sortAsc ? "\u25B2" : "\u25BC";
     } else {
       el.className = "arrow";
       el.textContent = "";
@@ -289,6 +432,7 @@ function updateSortArrows() {
   });
 }
 
+// ── Filtering & sorting ─────────────────────────────────────────────
 function applyFilters() {
   const q = document.getElementById("search").value.toLowerCase().trim();
   const state = document.getElementById("stateFilter").value;
@@ -298,7 +442,6 @@ function applyFilters() {
   const minAdmRate = parseFloat(document.getElementById("admRateFilter").value);
 
   filtered = allData.filter(r => {
-    // In "show selected only" mode, only show selected institutions
     if (showSelectedOnly && !selected.has(r.id)) return false;
     if (q && !r.name.toLowerCase().includes(q) && !r.city.toLowerCase().includes(q)) return false;
     if (state && r.state !== state) return false;
@@ -323,15 +466,13 @@ function sortData() {
     if (va == null) va = isNum ? -Infinity : "";
     if (vb == null) vb = isNum ? -Infinity : "";
     let cmp;
-    if (isNum) {
-      cmp = va - vb;
-    } else {
-      cmp = String(va).localeCompare(String(vb));
-    }
+    if (isNum) { cmp = va - vb; }
+    else { cmp = String(va).localeCompare(String(vb)); }
     return sortAsc ? cmp : -cmp;
   });
 }
 
+// ── Table rendering ─────────────────────────────────────────────────
 function renderTable() {
   const tbody = document.getElementById("tableBody");
   const start = currentPage * PAGE_SIZE;
@@ -354,20 +495,15 @@ function renderTable() {
     COLUMNS.forEach(col => {
       const cls = col.type === "number" ? ' class="num"' : "";
       let val;
-      if (col.render) {
-        val = col.render(row);
-      } else if (col.fmt) {
-        val = col.fmt(row[col.key]);
-      } else {
-        val = esc(String(row[col.key] ?? "—"));
-      }
+      if (col.render) { val = col.render(row); }
+      else if (col.fmt) { val = col.fmt(row[col.key]); }
+      else { val = esc(String(row[col.key] ?? "\u2014")); }
       html += `<td${cls}>${val}</td>`;
     });
     html += "</tr>";
   });
   tbody.innerHTML = html;
 
-  // Attach checkbox listeners
   tbody.querySelectorAll('input[type="checkbox"]').forEach(cb => {
     cb.addEventListener("change", () => toggleRow(cb.dataset.id, cb.checked));
   });
@@ -376,13 +512,9 @@ function renderTable() {
   renderPagination();
 }
 
+// ── Selection ───────────────────────────────────────────────────────
 function toggleRow(id, isChecked) {
-  if (isChecked) {
-    selected.add(id);
-  } else {
-    selected.delete(id);
-  }
-  // Update row highlight without full re-render
+  if (isChecked) { selected.add(id); } else { selected.delete(id); }
   const tbody = document.getElementById("tableBody");
   tbody.querySelectorAll('input[type="checkbox"]').forEach(cb => {
     cb.closest("tr").className = selected.has(cb.dataset.id) ? "selected" : "";
@@ -396,10 +528,7 @@ function toggleSelectAll(e) {
   const start = currentPage * PAGE_SIZE;
   const page = filtered.slice(start, start + PAGE_SIZE);
   const checked = e.target.checked;
-  page.forEach(row => {
-    if (checked) selected.add(row.id);
-    else selected.delete(row.id);
-  });
+  page.forEach(row => { if (checked) selected.add(row.id); else selected.delete(row.id); });
   renderTable();
   updateSelectionBar();
   updateStats();
@@ -410,11 +539,7 @@ function updateSelectAllCheckbox() {
   if (!cb) return;
   const start = currentPage * PAGE_SIZE;
   const page = filtered.slice(start, start + PAGE_SIZE);
-  if (page.length === 0) {
-    cb.checked = false;
-    cb.indeterminate = false;
-    return;
-  }
+  if (page.length === 0) { cb.checked = false; cb.indeterminate = false; return; }
   const selCount = page.filter(r => selected.has(r.id)).length;
   cb.checked = selCount === page.length;
   cb.indeterminate = selCount > 0 && selCount < page.length;
@@ -436,8 +561,10 @@ function clearSelection() {
   btn.textContent = "Show selected only";
   applyFilters();
   updateSelectionBar();
+  closeTrend();
 }
 
+// ── Aggregates & stats ──────────────────────────────────────────────
 function computeAggregates(rows) {
   const total = rows.length;
   const totalEnroll = rows.reduce((s, r) => s + (r.totalEnroll || 0), 0);
@@ -469,15 +596,31 @@ function updateSelectionBar() {
   const agg = computeAggregates(selRows);
 
   let html = `<span>Enrollment: <strong>${agg.totalEnroll.toLocaleString()}</strong></span>`;
-  if (agg.avgGrad != null) {
-    html += `<span>Avg grad rate: <strong>${agg.avgGrad}%</strong></span>`;
-  }
-  if (agg.avgAdm != null) {
-    html += `<span>Avg adm rate: <strong>${agg.avgAdm}%</strong></span>`;
-  }
+  if (agg.avgGrad != null) { html += `<span>Avg grad rate: <strong>${agg.avgGrad}%</strong></span>`; }
+  if (agg.avgAdm != null) { html += `<span>Avg adm rate: <strong>${agg.avgAdm}%</strong></span>`; }
   statsEl.innerHTML = html;
 }
 
+function updateStats() {
+  const bar = document.getElementById("statsBar");
+  const agg = computeAggregates(filtered);
+
+  let html = `
+    <span><strong>${agg.total.toLocaleString()}</strong> institutions (${currentYear})</span>
+    <span>Total enrollment: <strong>${agg.totalEnroll.toLocaleString()}</strong></span>
+    <span>Avg grad rate: <strong>${agg.avgGrad != null ? agg.avgGrad + "%" : "\u2014"}</strong> (${agg.withGrad.toLocaleString()} reporting)</span>
+    <span>${agg.withAdm.toLocaleString()} with admissions data</span>
+  `;
+
+  // Add group trend button
+  if (filtered.length > 0 && availableYears.length > 1) {
+    html += `<button class="trend-btn" onclick="showTrendForGroup()">Group Trend</button>`;
+  }
+
+  bar.innerHTML = html;
+}
+
+// ── Pagination ──────────────────────────────────────────────────────
 function renderPagination() {
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const div = document.getElementById("pagination");
@@ -496,18 +639,157 @@ function goPage(p) {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-function updateStats() {
-  const bar = document.getElementById("statsBar");
-  const agg = computeAggregates(filtered);
+// ── Trend Charts ────────────────────────────────────────────────────
+const CHART_COLORS = [
+  "#0d6efd", "#dc3545", "#198754", "#fd7e14", "#6f42c1",
+  "#20c997", "#e83e8c", "#6610f2", "#0dcaf0", "#ffc107",
+];
 
-  bar.innerHTML = `
-    <span><strong>${agg.total.toLocaleString()}</strong> institutions</span>
-    <span>Total enrollment: <strong>${agg.totalEnroll.toLocaleString()}</strong></span>
-    <span>Avg grad rate: <strong>${agg.avgGrad != null ? agg.avgGrad + "%" : "—"}</strong> (${agg.withGrad.toLocaleString()} reporting)</span>
-    <span>${agg.withAdm.toLocaleString()} with admissions data</span>
-  `;
+const METRIC_LABELS = {
+  totalEnroll: "Enrollment",
+  gradRate: "Graduation Rate (%)",
+  admRate: "Admission Rate (%)",
+  satMid: "SAT Midpoint",
+  actMid: "ACT Midpoint",
+  enrollBlack: "Black Enrollment",
+  enrollHispanic: "Hispanic Enrollment",
+  enrollWhite: "White Enrollment",
+  enrollAsian: "Asian Enrollment",
+  deExclusive: "Exclusively Online",
+  deSome: "Some Online",
+  deNone: "Not Online",
+};
+
+function showTrendForSelected() {
+  if (selected.size === 0) return;
+  trendMode = "selected";
+  document.getElementById("trendModeBtn").textContent = "Show Group Average";
+  document.getElementById("trendPanel").classList.add("visible");
+  renderTrend();
 }
 
+function showTrendForGroup() {
+  trendMode = "group";
+  document.getElementById("trendModeBtn").textContent = "Show Selected Institutions";
+  document.getElementById("trendPanel").classList.add("visible");
+  renderTrend();
+}
+
+function toggleTrendMode() {
+  if (trendMode === "selected") {
+    trendMode = "group";
+    document.getElementById("trendModeBtn").textContent = "Show Selected Institutions";
+  } else {
+    trendMode = "selected";
+    document.getElementById("trendModeBtn").textContent = "Show Group Average";
+  }
+  renderTrend();
+}
+
+function closeTrend() {
+  document.getElementById("trendPanel").classList.remove("visible");
+  if (trendChart) { trendChart.destroy(); trendChart = null; }
+}
+
+function getInstTimeSeries(inst, metric) {
+  return availableYears.map(y => {
+    const yd = inst.yearData ? inst.yearData[String(y)] : null;
+    return yd ? (yd[metric] ?? null) : null;
+  });
+}
+
+function renderTrend() {
+  const metric = document.getElementById("trendMetric").value;
+  const ctx = document.getElementById("trendChart").getContext("2d");
+
+  if (trendChart) { trendChart.destroy(); trendChart = null; }
+
+  const datasets = [];
+
+  if (trendMode === "selected" && selected.size > 0) {
+    // One line per selected institution
+    let idx = 0;
+    for (const id of selected) {
+      const inst = fullData.find(d => d.id === id);
+      if (!inst) continue;
+      datasets.push({
+        label: inst.name,
+        data: getInstTimeSeries(inst, metric),
+        borderColor: CHART_COLORS[idx % CHART_COLORS.length],
+        backgroundColor: CHART_COLORS[idx % CHART_COLORS.length] + "33",
+        tension: 0.3,
+        spanGaps: true,
+        pointRadius: 3,
+      });
+      idx++;
+    }
+  } else {
+    // Group average: average metric across all currently filtered institutions
+    const filteredIds = new Set(filtered.map(r => r.id));
+    const filteredInsts = fullData.filter(d => filteredIds.has(d.id));
+
+    const data = availableYears.map(y => {
+      const yStr = String(y);
+      const values = filteredInsts
+        .map(inst => inst.yearData && inst.yearData[yStr] ? inst.yearData[yStr][metric] : null)
+        .filter(v => v != null);
+      return values.length > 0
+        ? values.reduce((a, b) => a + b, 0) / values.length
+        : null;
+    });
+
+    datasets.push({
+      label: `Average (${filtered.length} institutions)`,
+      data: data,
+      borderColor: CHART_COLORS[0],
+      backgroundColor: CHART_COLORS[0] + "33",
+      tension: 0.3,
+      spanGaps: true,
+      pointRadius: 4,
+      fill: true,
+    });
+  }
+
+  trendChart = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels: availableYears.map(String),
+      datasets: datasets,
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: {
+          position: "top",
+          labels: { boxWidth: 12, font: { size: 11 } },
+        },
+        tooltip: {
+          callbacks: {
+            label: function(ctx) {
+              const v = ctx.parsed.y;
+              if (v == null) return ctx.dataset.label + ": N/A";
+              if (metric === "gradRate" || metric === "admRate") {
+                return ctx.dataset.label + ": " + v.toFixed(1) + "%";
+              }
+              return ctx.dataset.label + ": " + Math.round(v).toLocaleString();
+            },
+          },
+        },
+      },
+      scales: {
+        x: { grid: { display: false } },
+        y: {
+          title: { display: true, text: METRIC_LABELS[metric] || metric },
+          beginAtZero: false,
+        },
+      },
+    },
+  });
+}
+
+// ── Bootstrap ───────────────────────────────────────────────────────
 init();
 </script>
 </body>

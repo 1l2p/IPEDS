@@ -1,5 +1,6 @@
 *.csv
 Dictionary Files/
+data/raw/
 .claude/
 __pycache__/
 .DS_Store
