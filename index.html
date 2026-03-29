@@ -198,13 +198,13 @@
       <option value="admRate">Admission Rate</option>
       <option value="satMid">SAT Midpoint</option>
       <option value="actMid">ACT Midpoint</option>
-      <option value="enrollBlack">Black Enrollment</option>
-      <option value="enrollHispanic">Hispanic Enrollment</option>
-      <option value="enrollWhite">White Enrollment</option>
-      <option value="enrollAsian">Asian Enrollment</option>
-      <option value="deExclusive">Exclusively Online</option>
-      <option value="deSome">Some Online</option>
-      <option value="deNone">Not Online</option>
+      <option value="pctBlack">% Black</option>
+      <option value="pctHispanic">% Hispanic</option>
+      <option value="pctWhite">% White</option>
+      <option value="pctAsian">% Asian</option>
+      <option value="pctOnlineOnly">% Online Only</option>
+      <option value="pctSomeOnline">% Some Online</option>
+      <option value="pctNotOnline">% Not Online</option>
     </select>
     <button id="trendModeBtn" onclick="toggleTrendMode()">Show Group Average</button>
     <button class="close-btn" onclick="closeTrend()" title="Close">&times;</button>
@@ -240,12 +240,12 @@ const COLUMNS = [
   { key: "admRate", label: "Adm Rate", type: "number", render: renderAdmRate },
   { key: "satMid", label: "SAT Mid", type: "number", fmt: fmtNum },
   { key: "actMid", label: "ACT Mid", type: "number", fmt: fmtNum },
-  { key: "enrollBlack", label: "Black", type: "number", fmt: fmtNum },
-  { key: "enrollHispanic", label: "Hispanic", type: "number", fmt: fmtNum },
-  { key: "enrollWhite", label: "White", type: "number", fmt: fmtNum },
-  { key: "deExclusive", label: "Online Only", type: "number", fmt: fmtNum },
-  { key: "deSome", label: "Some Online", type: "number", fmt: fmtNum },
-  { key: "deNone", label: "Not Online", type: "number", fmt: fmtNum },
+  { key: "pctBlack", label: "% Black", type: "number", fmt: fmtPct },
+  { key: "pctHispanic", label: "% Hispanic", type: "number", fmt: fmtPct },
+  { key: "pctWhite", label: "% White", type: "number", fmt: fmtPct },
+  { key: "pctOnlineOnly", label: "% Online Only", type: "number", fmt: fmtPct },
+  { key: "pctSomeOnline", label: "% Some Online", type: "number", fmt: fmtPct },
+  { key: "pctNotOnline", label: "% Not Online", type: "number", fmt: fmtPct },
 ];
 
 const PAGE_SIZE = 50;
@@ -307,12 +307,18 @@ function esc(s) {
 }
 
 // ── Multi-year data flattening ──────────────────────────────────────
+function pctOf(part, total) {
+  return (part != null && total > 0) ? round1(part / total * 100) : null;
+}
+function round1(v) { return Math.round(v * 10) / 10; }
+
 function flattenForYear(data, year) {
   const yStr = String(year);
   return data
     .filter(inst => inst.yearData && inst.yearData[yStr])
     .map(inst => {
       const yd = inst.yearData[yStr];
+      const t = yd.totalEnroll || 0;
       return {
         id: inst.id,
         name: inst.name,
@@ -323,6 +329,18 @@ function flattenForYear(data, year) {
         webAddr: inst.webAddr,
         hbcu: inst.hbcu,
         ...yd,
+        // Computed percentage fields
+        pctBlack: pctOf(yd.enrollBlack, t),
+        pctHispanic: pctOf(yd.enrollHispanic, t),
+        pctWhite: pctOf(yd.enrollWhite, t),
+        pctAsian: pctOf(yd.enrollAsian, t),
+        pctAIAN: pctOf(yd.enrollAIAN, t),
+        pctNHPI: pctOf(yd.enrollNHPI, t),
+        pctTwoMore: pctOf(yd.enrollTwoMore, t),
+        pctNonresident: pctOf(yd.enrollNonresident, t),
+        pctOnlineOnly: pctOf(yd.deExclusive, t),
+        pctSomeOnline: pctOf(yd.deSome, t),
+        pctNotOnline: pctOf(yd.deNone, t),
       };
     })
     .filter(r => r.totalEnroll && r.totalEnroll > 0);
@@ -659,13 +677,13 @@ const METRIC_LABELS = {
   admRate: "Admission Rate (%)",
   satMid: "SAT Midpoint",
   actMid: "ACT Midpoint",
-  enrollBlack: "Black Enrollment",
-  enrollHispanic: "Hispanic Enrollment",
-  enrollWhite: "White Enrollment",
-  enrollAsian: "Asian Enrollment",
-  deExclusive: "Exclusively Online",
-  deSome: "Some Online",
-  deNone: "Not Online",
+  pctBlack: "% Black",
+  pctHispanic: "% Hispanic",
+  pctWhite: "% White",
+  pctAsian: "% Asian",
+  pctOnlineOnly: "% Online Only",
+  pctSomeOnline: "% Some Online",
+  pctNotOnline: "% Not Online",
 };
 
 function showTrendForSelected() {
@@ -699,10 +717,26 @@ function closeTrend() {
   if (trendChart) { trendChart.destroy(); trendChart = null; }
 }
 
+// Map computed pct* keys to the raw fields they derive from
+const PCT_SOURCE = {
+  pctBlack: "enrollBlack", pctHispanic: "enrollHispanic",
+  pctWhite: "enrollWhite", pctAsian: "enrollAsian",
+  pctAIAN: "enrollAIAN", pctNHPI: "enrollNHPI",
+  pctTwoMore: "enrollTwoMore", pctNonresident: "enrollNonresident",
+  pctOnlineOnly: "deExclusive", pctSomeOnline: "deSome", pctNotOnline: "deNone",
+};
+
+function getYdMetric(yd, metric) {
+  if (!yd) return null;
+  const src = PCT_SOURCE[metric];
+  if (src) return pctOf(yd[src], yd.totalEnroll);
+  return yd[metric] ?? null;
+}
+
 function getInstTimeSeries(inst, metric) {
   return availableYears.map(y => {
     const yd = inst.yearData ? inst.yearData[String(y)] : null;
-    return yd ? (yd[metric] ?? null) : null;
+    return getYdMetric(yd, metric);
   });
 }
 
@@ -739,7 +773,7 @@ function renderTrend() {
     const data = availableYears.map(y => {
       const yStr = String(y);
       const values = filteredInsts
-        .map(inst => inst.yearData && inst.yearData[yStr] ? inst.yearData[yStr][metric] : null)
+        .map(inst => getYdMetric(inst.yearData && inst.yearData[yStr], metric))
         .filter(v => v != null);
       return values.length > 0
         ? values.reduce((a, b) => a + b, 0) / values.length
@@ -778,7 +812,7 @@ function renderTrend() {
             label: function(ctx) {
               const v = ctx.parsed.y;
               if (v == null) return ctx.dataset.label + ": N/A";
-              if (metric === "gradRate" || metric === "admRate") {
+              if (metric === "gradRate" || metric === "admRate" || metric.startsWith("pct")) {
                 return ctx.dataset.label + ": " + v.toFixed(1) + "%";
               }
               return ctx.dataset.label + ": " + Math.round(v).toLocaleString();
