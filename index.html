@@ -125,7 +125,7 @@
   td a { color: var(--primary); text-decoration: none; }
   td a:hover { text-decoration: underline; }
   .hbcu-tag { background: #ffc107; color: #000; font-size: 0.65rem; padding: 0.1rem 0.35rem; border-radius: 3px; margin-left: 0.3rem; font-weight: 600; }
-  .open-tag { background: #198754; color: #fff; font-size: 0.65rem; padding: 0.1rem 0.35rem; border-radius: 3px; margin-left: 0.3rem; font-weight: 600; }
+
   .om-tag { background: #6f42c1; color: #fff; font-size: 0.6rem; padding: 0.1rem 0.3rem; border-radius: 3px; margin-left: 0.3rem; font-weight: 600; cursor: help; }
 
   .pagination { display: flex; gap: 0.4rem; align-items: center; justify-content: center; padding: 1rem; }
@@ -237,7 +237,7 @@ const COLUMNS = [
   { key: "sector", label: "Sector", type: "string" },
   { key: "totalEnroll", label: "Enrollment", type: "number", fmt: fmtNum },
   { key: "gradRate", label: "Grad Rate", type: "number", render: renderGradRate },
-  { key: "admRate", label: "Adm Rate", type: "number", render: renderAdmRate },
+  { key: "admRate", label: "Adm Rate", type: "number", fmt: fmtPct },
   { key: "satMid", label: "SAT Mid", type: "number", fmt: fmtNum },
   { key: "actMid", label: "ACT Mid", type: "number", fmt: fmtNum },
   { key: "pctBlack", label: "% Black", type: "number", fmt: fmtPct },
@@ -294,11 +294,6 @@ function renderGradRate(row) {
   return pct;
 }
 
-function renderAdmRate(row) {
-  if (row.admRate == null) return "\u2014";
-  if (row.openAdmission) return '100% <span class="open-tag">Open</span>';
-  return row.admRate.toFixed(1) + "%";
-}
 
 function esc(s) {
   const d = document.createElement("div");

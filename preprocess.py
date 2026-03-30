@@ -380,7 +380,11 @@ def load_admissions(year: int) -> dict:
 
 
 def load_ic(year: int) -> dict:
-    """Load IC data: open admission flag + distance education flags."""
+    """Load IC data: open admission flag, distance ed flags, degree levels.
+
+    Degree level flags (LEVEL3=Associate, LEVEL5=Bachelor) are used to
+    filter institutions to those awarding at least an associate or bachelor degree.
+    """
     path = csv_path(year, "ic")
     if not path.exists():
         print(f"  [warn] {path} not found")
@@ -398,13 +402,18 @@ def load_ic(year: int) -> dict:
                 record["openAdmission"] = True
 
             # Distance education flags (available from ~2017+)
-            # DISTCRS: offers DE courses, DISTPGS: offers DE programs
             distcrs = row.get("DISTCRS", "").strip()
             distpgs = row.get("DISTPGS", "").strip()
             if distcrs == "1":
                 record["deOffersCourses"] = True
             if distpgs == "1":
                 record["deOffersPrograms"] = True
+
+            # Degree level flags: LEVEL3=Associate, LEVEL5=Bachelor
+            awards_assoc = row.get("LEVEL3", "").strip() == "1"
+            awards_bach = row.get("LEVEL5", "").strip() == "1"
+            record["awardsAssociate"] = awards_assoc
+            record["awardsBachelor"] = awards_bach
 
             ic_data[uid] = record
     return ic_data
@@ -486,10 +495,28 @@ def main() -> None:
             if total is not None and total > 0:
                 institutions[uid]["yearData"][str(year)] = strip_none(yd)
 
-    # Filter: only keep institutions with at least one year of data
+    # Filter: only keep institutions that award associate or bachelor degrees
+    # in at least one year, and have at least one year of enrollment data.
+    degree_eligible = set()
+    for uid, inst in institutions.items():
+        for yd in inst.get("yearData", {}).values():
+            if yd.get("awardsAssociate") or yd.get("awardsBachelor"):
+                degree_eligible.add(uid)
+                break
+
+    # Strip degree flags from yearData (used only for filtering, not display)
+    for inst in institutions.values():
+        for yd in inst.get("yearData", {}).values():
+            yd.pop("awardsAssociate", None)
+            yd.pop("awardsBachelor", None)
+
     result = [
-        inst for inst in institutions.values() if inst.get("yearData")
+        inst
+        for uid, inst in institutions.items()
+        if inst.get("yearData") and uid in degree_eligible
     ]
+    print(f"\nDegree-eligible (Associate or Bachelor): {len(degree_eligible)}")
+    print(f"Excluded (no Associate/Bachelor): {len(institutions) - len(degree_eligible)}")
 
     # Sort by most recent year's enrollment (use latest available year)
     def sort_key(inst: dict) -> int:
