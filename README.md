@@ -1,6 +1,6 @@
 # IPEDS Explorer
 
-A single-page web application for exploring U.S. higher education data from [IPEDS](https://nces.ed.gov/ipeds/) (Integrated Postsecondary Education Data System), covering 2014-2024.
+A single-page web application for exploring U.S. higher education data from [IPEDS](https://nces.ed.gov/ipeds/) (Integrated Postsecondary Education Data System), covering 2014-2024. Try it out [here](https://philippschmidt.org/IPEDS/).
 
 Browse, filter, and compare ~4,000 colleges and universities that award Associate or Bachelor degrees. Includes enrollment, graduation rates, admissions, demographics, and distance education data with trend charts for historical comparison.
 
